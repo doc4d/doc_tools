@@ -1,0 +1,9 @@
+[package]
+name = "opti_images"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.92"
+glob = "0.3.1"
+oxipng = "9.1.2"
