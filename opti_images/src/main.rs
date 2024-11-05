@@ -1,6 +1,6 @@
 use glob::glob;
 use oxipng::{optimize, Options};
-use std::{env, path};
+use std::env;
 
 fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
