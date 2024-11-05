@@ -1,4 +1,4 @@
-use glob::{glob, glob_with};
+use glob::glob_with;
 use oxipng::{optimize, Options};
 use std::env;
 
