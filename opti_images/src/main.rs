@@ -6,12 +6,12 @@ fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
     let directory = &args[1];
 
-    for entry in glob(format!("{}../../**/*.png", directory).as_str())? {
+    for entry in glob(directory)? {
         let path = entry?.to_path_buf();
 
         // Create default options for Oxipng
         let options = Options::default();
-        print!("{}", path.clone().display());
+        println!("{}", path.clone().display());
         // Optimize the image
         let in_file = oxipng::InFile::from(&path);
         let out_file = oxipng::OutFile::from_path(path.clone());
