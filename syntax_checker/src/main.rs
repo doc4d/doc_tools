@@ -77,22 +77,20 @@ fn get_type(
     Ok(function_result)
 }
 
-fn get_ending_param(syntax: &str) -> Option<String> {
+fn get_ending_param_name(syntax: &str) -> Option<String> {
     let end_result: Vec<&str> = syntax.split("->").collect();
 
-    if end_result.len() == 2 {
-        if let Some(ending) = end_result.last() {
-            if !ending.contains(":") {
-                return Some(ending.trim().to_string());
-            }
-        }
-    }
-    None
+    end_result
+        .get(1)
+        .filter(|str| !str.contains(":"))
+        .map(|s| s.trim().to_string())
 }
 
 fn replace_types(content: String) -> Result<String, anyhow::Error> {
     let re = Regex::new(r"(\|\s*)(Longint)(\s*\|)")?;
-    let mut new_content = re.replace_all(content.as_str(), "${1}Integer${3}").to_string();
+    let mut new_content = re
+        .replace_all(content.as_str(), "${1}Integer${3}")
+        .to_string();
 
     let re = Regex::new(r"(\|\s*)(String)(\s*\|)")?;
     new_content = re
@@ -122,7 +120,7 @@ fn check_syntax(
         let params = get_params(content, command)?;
         let mut types: HashSet<String> = HashSet::new();
         for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param(syntax) {
+            if let Some(ending) = get_ending_param_name(syntax) {
                 if let Some(new_type) = get_type(ending.as_str(), params.as_str(), &logger)? {
                     types.insert(new_type);
                 }
@@ -138,7 +136,7 @@ fn check_syntax(
         }
 
         for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param(syntax) {
+            if let Some(ending) = get_ending_param_name(syntax) {
                 if let Some(new_type) = type_to_give {
                     if args.fix {
                         let replace_ending_regex =
@@ -162,7 +160,7 @@ fn main() -> Result<(), anyhow::Error> {
     for path in &args.paths {
         for entry in glob::glob(path.as_str())? {
             let path = entry?;
-            let content = std::fs::read_to_string(path.clone())?;
+            let content = std::fs::read_to_string(path.as_path())?;
             let mut new_content = content;
             if args.fix {
                 new_content = replace_types(new_content)?;
@@ -173,9 +171,27 @@ fn main() -> Result<(), anyhow::Error> {
                 &find_command_regex,
                 &args,
             )?;
-            fs::write(path.clone(), new_content)?;
+            fs::write(path.as_path(), new_content)?;
         }
     }
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ending_param() {
+        let result = get_ending_param_name("**function()**");
+        assert_eq!(result, None);
+
+        let result = get_ending_param_name("**function**()-> Function Result");
+        assert_eq!(result, Some("Function Result".to_string()));
+
+        let result = get_ending_param_name("**function**()-> Function Result : Collection");
+        assert_eq!(result, None);
+    }
 }
