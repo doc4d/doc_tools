@@ -13,6 +13,27 @@ struct Args {
     #[arg(short, long, num_args = 1.., value_delimiter = ' ')]
     paths: Vec<String>,
 }
+#[derive(PartialEq, Debug)]
+struct Param {
+    pub name: Option<String>,
+    pub param: Option<String>,
+}
+
+impl Param {
+    fn new(value: Vec<&str>) -> Self {
+        Self {
+            name: value.first().map(|s| s.trim().to_string()),
+            param: value.get(1).map(|s| s.trim().to_string()),
+        }
+    }
+    #[cfg(test)]
+    fn new_from(name: Option<&str>, param: Option<&str>) -> Self {
+        Self {
+            name: name.map(|s| s.to_string()),
+            param: param.map(|s| s.to_string()),
+        }
+    }
+}
 
 struct Logger {
     pub current_command: String,
@@ -77,13 +98,11 @@ fn get_type(
     Ok(function_result)
 }
 
-fn get_ending_param_name(syntax: &str) -> Option<String> {
+fn get_ending_param_name(syntax: &str) -> Option<Param> {
     let end_result: Vec<&str> = syntax.split("->").collect();
-
     end_result
         .get(1)
-        .filter(|str| !str.contains(":"))
-        .map(|s| s.trim().to_string())
+        .map(|s| Param::new(s.split(":").collect::<Vec<&str>>()))
 }
 
 fn replace_types(content: String) -> Result<String, anyhow::Error> {
@@ -120,7 +139,7 @@ fn check_syntax(
         let params = get_params(content, command)?;
         let mut types: HashSet<String> = HashSet::new();
         for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param_name(syntax) {
+            if let Some(ending) = get_ending_param_name(syntax).and_then(|p| p.name) {
                 if let Some(new_type) = get_type(ending.as_str(), params.as_str(), &logger)? {
                     types.insert(new_type);
                 }
@@ -136,7 +155,7 @@ fn check_syntax(
         }
 
         for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param_name(syntax) {
+            if let Some(ending) = get_ending_param_name(syntax).and_then(|p| p.name) {
                 if let Some(new_type) = type_to_give {
                     if args.fix {
                         let replace_ending_regex =
@@ -178,7 +197,6 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,9 +207,12 @@ mod tests {
         assert_eq!(result, None);
 
         let result = get_ending_param_name("**function**()-> Function Result");
-        assert_eq!(result, Some("Function Result".to_string()));
+        assert_eq!(result, Some(Param::new_from(Some("Function Result"), None)));
 
         let result = get_ending_param_name("**function**()-> Function Result : Collection");
-        assert_eq!(result, None);
+        assert_eq!(
+            result,
+            Some(Param::new_from(Some("Function Result"), Some("Collection")))
+        );
     }
 }
