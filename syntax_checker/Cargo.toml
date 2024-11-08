@@ -1,0 +1,11 @@
+[package]
+name = "syntax_checker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.93"
+clap = { version = "4.5.20", default-features=false,features = ["derive", "std"] }
+colored = "2.1.0"
+glob = "0.3.1"
+regex = "1.11.1"
