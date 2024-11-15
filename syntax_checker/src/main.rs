@@ -20,12 +20,7 @@ struct Param {
 }
 
 impl Param {
-    fn new(value: Vec<&str>) -> Self {
-        Self {
-            name: value.first().map(|s| s.trim().to_string()),
-            param: value.get(1).map(|s| s.trim().to_string()),
-        }
-    }
+
     #[cfg(test)]
     fn new_from(name: Option<&str>, param: Option<&str>) -> Self {
         Self {
@@ -99,10 +94,34 @@ fn get_type(
 }
 
 fn get_ending_param(syntax: &str) -> Option<Param> {
-    let end_result: Vec<&str> = syntax.split("->").collect();
-    end_result
-        .get(1)
-        .map(|s| Param::new(s.split(":").collect::<Vec<&str>>()))
+    //ASCII
+    let mut last_stop = syntax.len();
+    let mut name : Option<String> = None;
+    let mut type_name : Option<String> = None;
+    for (index, c) in syntax.bytes().enumerate().rev() {
+        if c == b':' {
+            type_name = syntax.get(index+1..last_stop).map(|s|s.trim().to_string());
+            last_stop = index;
+        }
+        else if c == b'>' {
+            name = syntax.get(index+1..last_stop).map(|s|s.trim().to_string());
+            break;
+        }
+        else if c == b')' || c == b'}' || c == b'*' {
+            break;
+        }
+    }
+
+    let param = Param {
+        name,
+        param:type_name
+    };
+
+    if param.name.is_none() && param.param.is_none() {
+        return None;
+    }
+    Some(param)
+
 }
 
 fn replace_types(
@@ -215,5 +234,23 @@ mod tests {
             result,
             Some(Param::new_from(Some("Function Result"), Some("Collection")))
         );
+
+        let result = get_ending_param("**function**($a : Text) : Collection");
+        assert_eq!(
+            result,
+            Some(Param::new_from(None, Some("Collection")))
+        );
+
+        let result = get_ending_param("**.original** : Collection");
+        assert_eq!(
+            result,
+            Some(Param::new_from(None, Some("Collection")))
+        );
+
+        let result = get_ending_param("**.original**");
+        assert_eq!(
+            result,
+            None);
+        
     }
 }
