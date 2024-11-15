@@ -53,7 +53,7 @@ impl Logger {
 fn get_params(content: &str, command: &str) -> Result<String, anyhow::Error> {
     let find_params_regex: Regex = Regex::new(
         format!(
-            "<!--REF #_command_\\.{}\\.Params-->([\\s\\S]*)<!-- END REF-->",
+            r"<!--\s*REF #{}\.Params-->([\s\S]*)<!--\s*END REF\s*-->",
             command
         )
         .as_str(),
@@ -98,23 +98,21 @@ fn get_type(
     Ok(function_result)
 }
 
-fn get_ending_param_name(syntax: &str) -> Option<Param> {
+fn get_ending_param(syntax: &str) -> Option<Param> {
     let end_result: Vec<&str> = syntax.split("->").collect();
     end_result
         .get(1)
         .map(|s| Param::new(s.split(":").collect::<Vec<&str>>()))
 }
 
-fn replace_types(content: String) -> Result<String, anyhow::Error> {
-    let re = Regex::new(r"(\|\s*)(Longint)(\s*\|)")?;
-    let mut new_content = re
-        .replace_all(content.as_str(), "${1}Integer${3}")
-        .to_string();
-
-    let re = Regex::new(r"(\|\s*)(String)(\s*\|)")?;
-    new_content = re
-        .replace_all(new_content.as_str(), "${1}Text${3}")
-        .to_string();
+fn replace_types(
+    content: String,
+    list_to_replace: &Vec<(Regex, &str)>,
+) -> Result<String, anyhow::Error> {
+    let mut new_content = content;
+    for (re, new_type) in list_to_replace {
+        new_content = re.replace_all(new_content.as_str(), *new_type).to_string();
+    }
     Ok(new_content)
 }
 
@@ -139,7 +137,7 @@ fn check_syntax(
         let params = get_params(content, command)?;
         let mut types: HashSet<String> = HashSet::new();
         for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param_name(syntax).and_then(|p| p.name) {
+            if let Some(ending) = get_ending_param(syntax).and_then(|p| p.name) {
                 if let Some(new_type) = get_type(ending.as_str(), params.as_str(), &logger)? {
                     types.insert(new_type);
                 }
@@ -153,10 +151,10 @@ fn check_syntax(
         } else {
             type_to_give = types.iter().next().map(|x| x.as_str());
         }
-
         for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param_name(syntax).and_then(|p| p.name) {
+            if let Some(ending) = get_ending_param(syntax).and_then(|p| p.name) {
                 if let Some(new_type) = type_to_give {
+
                     if args.fix {
                         let replace_ending_regex =
                             Regex::new(format!(r"->\s?{}", ending).as_str())?;
@@ -173,16 +171,19 @@ fn check_syntax(
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
-
+    let types = vec![
+        (Regex::new(r"(\|\s*)(Longint)(\s*\|)")?, "${1}Integer${3}"),
+        (Regex::new(r"(\|\s*)(String)(\s*\|)")?, "${1}Text${3}"),
+    ];
     let find_command_regex =
-        Regex::new(r"<!--\sREF #(.*?)\.Syntax\s*-->(.*?)<!--\s*END REF\s*-->")?;
+        Regex::new(r"<!--\s*REF #(.*?)\.Syntax\s*-->(.*?)<!--\s*END REF\s*-->")?;
     for path in &args.paths {
         for entry in glob::glob(path.as_str())? {
             let path = entry?;
             let content = std::fs::read_to_string(path.as_path())?;
             let mut new_content = content;
             if args.fix {
-                new_content = replace_types(new_content)?;
+                new_content = replace_types(new_content, &types)?;
             }
             new_content = check_syntax(
                 path.as_path(),
@@ -203,13 +204,13 @@ mod tests {
 
     #[test]
     fn ending_param() {
-        let result = get_ending_param_name("**function()**");
+        let result = get_ending_param("**function()**");
         assert_eq!(result, None);
 
-        let result = get_ending_param_name("**function**()-> Function Result");
+        let result = get_ending_param("**function**()-> Function Result");
         assert_eq!(result, Some(Param::new_from(Some("Function Result"), None)));
 
-        let result = get_ending_param_name("**function**()-> Function Result : Collection");
+        let result = get_ending_param("**function**()-> Function Result : Collection");
         assert_eq!(
             result,
             Some(Param::new_from(Some("Function Result"), Some("Collection")))
