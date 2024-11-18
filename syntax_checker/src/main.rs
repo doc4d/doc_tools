@@ -1,6 +1,8 @@
 use clap::Parser;
 use colored::Colorize;
 use regex::Regex;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::{collections::HashSet, fs, path::Path};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -20,7 +22,6 @@ struct Param {
 }
 
 impl Param {
-
     #[cfg(test)]
     fn new_from(name: Option<&str>, param: Option<&str>) -> Self {
         Self {
@@ -29,6 +30,23 @@ impl Param {
         }
     }
 }
+
+static VALID_TYPES: &[&str] = &[
+    "Integer",
+    "Text",
+    "Collection",
+    "Object",
+    "Boolean",
+    "any",
+    "Date",
+    "Time",
+    "Blob",
+    "Variant",
+    "Real",
+    "Pointer",
+    "Picture",
+    "Null"
+];
 
 struct Logger {
     pub current_command: String,
@@ -93,46 +111,78 @@ fn get_type(
     Ok(function_result)
 }
 
-fn get_ending_param(syntax: &str) -> Option<Param> {
+fn get_syntax_type_return_param(syntax: &str) -> Option<Param> {
     //ASCII
     let mut last_stop = syntax.len();
-    let mut name : Option<String> = None;
-    let mut type_name : Option<String> = None;
+    let mut name: Option<String> = None;
+    let mut type_name: Option<String> = None;
     for (index, c) in syntax.bytes().enumerate().rev() {
         if c == b':' {
-            type_name = syntax.get(index+1..last_stop).map(|s|s.trim().to_string());
+            type_name = syntax
+                .get(index + 1..last_stop)
+                .map(|s| s.trim().to_string());
             last_stop = index;
-        }
-        else if c == b'>' {
-            name = syntax.get(index+1..last_stop).map(|s|s.trim().to_string());
+        } else if c == b'>' {
+            name = syntax
+                .get(index + 1..last_stop)
+                .map(|s| s.trim().to_string());
             break;
-        }
-        else if c == b')' || c == b'}' || c == b'*' {
+        } else if c == b')' || c == b'}' || c == b'*' {
             break;
         }
     }
 
     let param = Param {
         name,
-        param:type_name
+        param: type_name,
     };
 
     if param.name.is_none() && param.param.is_none() {
         return None;
     }
     Some(param)
-
 }
 
-fn replace_types(
-    content: String,
-    list_to_replace: &Vec<(Regex, &str)>,
-) -> Result<String, anyhow::Error> {
-    let mut new_content = content;
-    for (re, new_type) in list_to_replace {
-        new_content = re.replace_all(new_content.as_str(), *new_type).to_string();
+fn validate_type(type_to_validate: &str) -> bool {
+    if type_to_validate.contains(".") {
+        return true;
     }
-    Ok(new_content)
+    VALID_TYPES.contains(&type_to_validate)
+}
+
+fn get_type_return_param(
+    params: &str,
+    syntaxes: &str,
+    logger: Arc<Logger>,
+) -> Result<Option<String>, anyhow::Error> {
+    let mut types: HashSet<String> = HashSet::new();
+    for syntax in syntaxes.split("</br>") {
+        let return_param = get_syntax_type_return_param(syntax);
+        if let Some(ending) = return_param.as_ref().and_then(|p| p.name.clone()) {
+            if let Some(new_type) = get_type(ending.as_str(), params, &logger)? {
+                types.insert(new_type);
+            }
+        } else if let Some(type_) = return_param.and_then(|p| p.param) {
+            types.insert(type_);
+        }
+    }
+
+    let mut type_to_give: Option<String> = Some("any".to_string());
+    if types.len() > 1 {
+        logger.print_warning("Has different types");
+        logger.print_complementary_info();
+    } else {
+        type_to_give = types.iter().next().map(|s| s.clone());
+    }
+
+    if let Some(type_to_give) = &type_to_give {
+        if !validate_type(type_to_give) {
+            logger.print_warning(format!("Invalid type {}", type_to_give).as_str());
+            logger.print_complementary_info();
+        }
+    }
+
+    Ok(type_to_give)
 }
 
 fn check_syntax(
@@ -140,6 +190,7 @@ fn check_syntax(
     content: &str,
     find_command_regex: &Regex,
     args: &Args,
+    conversion_map: Box<HashMap<String, String>>,
 ) -> Result<String, anyhow::Error> {
     let mut new_content = content.to_string();
 
@@ -147,39 +198,59 @@ fn check_syntax(
         .captures_iter(content)
         .map(|c| c.extract())
     {
-        let logger = Logger {
+        let logger = std::sync::Arc::new(Logger {
             current_command: command.to_owned(),
             path: path.display().to_string(),
-        };
-        //println!("{}", command);
-        //println!("{}", syntaxes);
-        let params = get_params(content, command)?;
-        let mut types: HashSet<String> = HashSet::new();
-        for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param(syntax).and_then(|p| p.name) {
-                if let Some(new_type) = get_type(ending.as_str(), params.as_str(), &logger)? {
-                    types.insert(new_type);
-                }
+        });
+
+        let mut params = get_params(content, command)?;
+        let old_params = params.clone();
+        if args.fix {
+            for (key, value) in conversion_map.iter() {
+                let regex_pattern = format!(r"(\|\s*)({})(\s*\|)", key);
+                let replacement: String = String::from(format!("${{1}}{}${{3}}", value));
+                let re = Regex::new(regex_pattern.as_str())?;
+                params = re
+                    .replace_all(params.as_str(), replacement.as_str())
+                    .to_string();
             }
+            new_content = new_content.replace(old_params.as_str(), params.to_string().as_str());
         }
-
-        let mut type_to_give: Option<&str> = Some("any");
-        if types.len() > 1 {
-            logger.print_warning("Has different types");
-            logger.print_complementary_info();
-        } else {
-            type_to_give = types.iter().next().map(|x| x.as_str());
-        }
+        let type_to_give = get_type_return_param(params.as_str(), syntaxes, logger.clone())?;
         for syntax in syntaxes.split("</br>") {
-            if let Some(ending) = get_ending_param(syntax).and_then(|p| p.name) {
-                if let Some(new_type) = type_to_give {
-
+            let param = get_syntax_type_return_param(syntax);
+            if let Some(ending) = param.as_ref().and_then(|p| p.name.clone()) {
+                if let Some(new_type) = &type_to_give {
                     if args.fix {
                         let replace_ending_regex =
                             Regex::new(format!(r"->\s?{}", ending).as_str())?;
-                        let new_syntax = replace_ending_regex
-                            .replace(syntax, format!(": {}", new_type).as_str());
+                        let mut new_syntax = replace_ending_regex
+                            .replace(syntax, format!(": {}", new_type).as_str())
+                            .to_string();
+
+                        for (key, value) in conversion_map.iter() {
+                            let replacement: String = String::from(format!("${{1}}{}", value));
+                            let re = Regex::new(format!(r"(:\s)({})", key).as_str())?;
+                            new_syntax = re
+                                .replace_all(new_syntax.as_str(), replacement.as_str())
+                                .to_string();
+                        }
+                        dbg!(&new_syntax);
                         new_content = new_content.replace(syntax, new_syntax.to_string().as_str());
+                    }
+                }
+            } else if let Some(type_) = param.and_then(|p| p.param) {
+                if !validate_type(type_.as_str()) && conversion_map.contains_key(type_.as_str()) {
+                    if args.fix {
+                        if let Some(value) = conversion_map.get_key_value(&type_) {
+                            let re = Regex::new(format!(r"(:\s)({})", type_).as_str())?;
+                            let replacement: String = String::from(format!("${{1}}{}", value.1));
+                            let new_syntax =
+                                re.replace_all(syntax, replacement.as_str()).to_string();
+
+                            new_content =
+                                new_content.replace(syntax, new_syntax.to_string().as_str());
+                        }
                     }
                 }
             }
@@ -190,10 +261,29 @@ fn check_syntax(
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
-    let types = vec![
-        (Regex::new(r"(\|\s*)(Longint)(\s*\|)")?, "${1}Integer${3}"),
-        (Regex::new(r"(\|\s*)(String)(\s*\|)")?, "${1}Text${3}"),
-    ];
+    let mut types: Vec<(Regex, String)> = Vec::new();
+    let mut conversion_map: Box<HashMap<String, String>> = Box::new(HashMap::new());
+    conversion_map.insert("Longint".to_string(), "Integer".to_string());
+    conversion_map.insert("String".to_string(), "Text".to_string());
+    conversion_map.insert("ListRef".to_string(), "Integer".to_string());
+    conversion_map.insert("WinRef".to_string(), "Integer".to_string());
+    conversion_map.insert("Expression".to_string(), "any".to_string());
+    conversion_map.insert("Mixed".to_string(), "any".to_string());
+    conversion_map.insert("DocRef".to_string(), "Time".to_string());
+    conversion_map.insert("MenuRef".to_string(), "Text".to_string());
+    conversion_map.insert("Number".to_string(), "Integer".to_string());
+    conversion_map.insert("Inteiro longo".to_string(), "Integer".to_string());
+    conversion_map.insert("Inteiro".to_string(), "Integer".to_string());
+    conversion_map.insert("Object".to_string(), "Integer".to_string());
+    conversion_map.insert("object".to_string(), "Object".to_string());
+    conversion_map.insert("Entier long".to_string(), "Object".to_string());
+
+    for (key, value) in conversion_map.clone().iter() {
+        let regex_pattern = format!(r"(\|\s*)({})(\s*\|)", key);
+        let replacement: String = String::from(format!("${{1}}{}${{3}}", value));
+        types.push((Regex::new(regex_pattern.as_str())?, replacement));
+    }
+
     let find_command_regex =
         Regex::new(r"<!--\s*REF #(.*?)\.Syntax\s*-->(.*?)<!--\s*END REF\s*-->")?;
     for path in &args.paths {
@@ -201,14 +291,13 @@ fn main() -> Result<(), anyhow::Error> {
             let path = entry?;
             let content = std::fs::read_to_string(path.as_path())?;
             let mut new_content = content;
-            if args.fix {
-                new_content = replace_types(new_content, &types)?;
-            }
+
             new_content = check_syntax(
                 path.as_path(),
                 new_content.as_str(),
                 &find_command_regex,
                 &args,
+                conversion_map.clone(),
             )?;
             fs::write(path.as_path(), new_content)?;
         }
@@ -223,34 +312,25 @@ mod tests {
 
     #[test]
     fn ending_param() {
-        let result = get_ending_param("**function()**");
+        let result = get_syntax_type_return_param("**function()**");
         assert_eq!(result, None);
 
-        let result = get_ending_param("**function**()-> Function Result");
+        let result = get_syntax_type_return_param("**function**()-> Function Result");
         assert_eq!(result, Some(Param::new_from(Some("Function Result"), None)));
 
-        let result = get_ending_param("**function**()-> Function Result : Collection");
+        let result = get_syntax_type_return_param("**function**()-> Function Result : Collection");
         assert_eq!(
             result,
             Some(Param::new_from(Some("Function Result"), Some("Collection")))
         );
 
-        let result = get_ending_param("**function**($a : Text) : Collection");
-        assert_eq!(
-            result,
-            Some(Param::new_from(None, Some("Collection")))
-        );
+        let result = get_syntax_type_return_param("**function**($a : Text) : Collection");
+        assert_eq!(result, Some(Param::new_from(None, Some("Collection"))));
 
-        let result = get_ending_param("**.original** : Collection");
-        assert_eq!(
-            result,
-            Some(Param::new_from(None, Some("Collection")))
-        );
+        let result = get_syntax_type_return_param("**.original** : Collection");
+        assert_eq!(result, Some(Param::new_from(None, Some("Collection"))));
 
-        let result = get_ending_param("**.original**");
-        assert_eq!(
-            result,
-            None);
-        
+        let result = get_syntax_type_return_param("**.original**");
+        assert_eq!(result, None);
     }
 }
