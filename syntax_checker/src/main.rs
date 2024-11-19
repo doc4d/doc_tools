@@ -3,6 +3,7 @@ use colored::Colorize;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::rc::Rc;
 use std::{collections::HashSet, fs, path::Path};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -45,7 +46,7 @@ static VALID_TYPES: &[&str] = &[
     "Real",
     "Pointer",
     "Picture",
-    "Null"
+    "Null",
 ];
 
 struct Logger {
@@ -190,7 +191,7 @@ fn check_syntax(
     content: &str,
     find_command_regex: &Regex,
     args: &Args,
-    conversion_map: Box<HashMap<String, String>>,
+    conversion_map: Rc<HashMap<String, String>>,
 ) -> Result<String, anyhow::Error> {
     let mut new_content = content.to_string();
 
@@ -207,7 +208,8 @@ fn check_syntax(
         let old_params = params.clone();
         if args.fix {
             for (key, value) in conversion_map.iter() {
-                let regex_pattern = format!(r"(\|\s*)({})(\s*\|)", key);
+                //fix return type only
+                let regex_pattern = format!(r"( \|\s*)({})(\s*\|\s&(#8592|rarr);)", key);
                 let replacement: String = String::from(format!("${{1}}{}${{3}}", value));
                 let re = Regex::new(regex_pattern.as_str())?;
                 params = re
@@ -227,15 +229,13 @@ fn check_syntax(
                         let mut new_syntax = replace_ending_regex
                             .replace(syntax, format!(": {}", new_type).as_str())
                             .to_string();
-
-                        for (key, value) in conversion_map.iter() {
-                            let replacement: String = String::from(format!("${{1}}{}", value));
-                            let re = Regex::new(format!(r"(:\s)({})", key).as_str())?;
+                        if let Some(value) = conversion_map.get_key_value(new_type) {
+                            let re = Regex::new(format!(r"(:\s)({})", new_type).as_str())?;
+                            let replacement: String = String::from(format!("${{1}}{}", value.1));
                             new_syntax = re
                                 .replace_all(new_syntax.as_str(), replacement.as_str())
                                 .to_string();
                         }
-                        dbg!(&new_syntax);
                         new_content = new_content.replace(syntax, new_syntax.to_string().as_str());
                     }
                 }
@@ -262,21 +262,21 @@ fn check_syntax(
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
     let mut types: Vec<(Regex, String)> = Vec::new();
-    let mut conversion_map: Box<HashMap<String, String>> = Box::new(HashMap::new());
-    conversion_map.insert("Longint".to_string(), "Integer".to_string());
-    conversion_map.insert("String".to_string(), "Text".to_string());
-    conversion_map.insert("ListRef".to_string(), "Integer".to_string());
-    conversion_map.insert("WinRef".to_string(), "Integer".to_string());
-    conversion_map.insert("Expression".to_string(), "any".to_string());
-    conversion_map.insert("Mixed".to_string(), "any".to_string());
-    conversion_map.insert("DocRef".to_string(), "Time".to_string());
-    conversion_map.insert("MenuRef".to_string(), "Text".to_string());
-    conversion_map.insert("Number".to_string(), "Integer".to_string());
-    conversion_map.insert("Inteiro longo".to_string(), "Integer".to_string());
-    conversion_map.insert("Inteiro".to_string(), "Integer".to_string());
-    conversion_map.insert("Object".to_string(), "Integer".to_string());
-    conversion_map.insert("object".to_string(), "Object".to_string());
-    conversion_map.insert("Entier long".to_string(), "Object".to_string());
+    let conversion_map: Rc<HashMap<String, String>> = Rc::new(HashMap::from([
+        ("Longint".to_string(), "Integer".to_string()),
+        ("String".to_string(), "Text".to_string()),
+        ("ListRef".to_string(), "Integer".to_string()),
+        ("WinRef".to_string(), "Integer".to_string()),
+        ("Expression".to_string(), "any".to_string()),
+        ("Mixed".to_string(), "any".to_string()),
+        ("DocRef".to_string(), "Time".to_string()),
+        ("MenuRef".to_string(), "Text".to_string()),
+        ("Number".to_string(), "Integer".to_string()),
+        ("Inteiro longo".to_string(), "Integer".to_string()),
+        ("Inteiro".to_string(), "Integer".to_string()),
+        ("object".to_string(), "Object".to_string()),
+        ("Entier long".to_string(), "Integer".to_string())
+    ]));
 
     for (key, value) in conversion_map.clone().iter() {
         let regex_pattern = format!(r"(\|\s*)({})(\s*\|)", key);
