@@ -1,7 +1,7 @@
 use glob::glob;
 use regex::Regex;
-use std::path::{Path, PathBuf};
-use std::{env, path};
+use std::path::PathBuf;
+use std::env;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
@@ -60,7 +60,7 @@ fn main() -> Result<(), anyhow::Error> {
             let sizes = paths.iter().fold(0, |acc, path| {acc + std::fs::metadata(path).unwrap().len()});
             //println!("Image {} is not used", name);
             for path in &paths {
-                std::fs::remove_file(path);
+                std::fs::remove_file(path)?;
             }
 
 
