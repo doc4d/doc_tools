@@ -14,13 +14,14 @@ struct Args {
 }
 
 fn create_regex(file_name: &str, extension: &str) -> Result<Regex, anyhow::Error> {
-    Ok(Regex::new(
+    Regex::new(
         format!(
-            r#"\[.*?\]\(([^ ]*{}\.{}?)( "(.+)")?\)"#,
+            r#"\[.*?\]\(([^ \)]*{}\.{}?)( "(.+)")?\)"#,
             file_name, extension
         )
         .as_str(),
-    )?)
+    )
+    .map_err(|err| anyhow::Error::msg(err.to_string()))
 }
 
 fn process_files<F>(pattern: &str, regex: &Regex, modify_content: F) -> Result<(), anyhow::Error>
