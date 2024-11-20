@@ -2,8 +2,8 @@ use clap::Parser;
 use colored::Colorize;
 use regex::Regex;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::{collections::HashSet, fs, path::Path};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -97,7 +97,7 @@ fn get_type(
         .map(|c| c.extract())
     {
         return_types.push(return_type);
-        if return_type.contains(",") {
+        if return_type.contains(',') {
             function_result = Some("any".to_owned());
         } else {
             function_result = Some(return_type.trim().to_string());
@@ -145,7 +145,7 @@ fn get_syntax_type_return_param(syntax: &str) -> Option<Param> {
 }
 
 fn validate_type(type_to_validate: &str) -> bool {
-    if type_to_validate.contains(".") {
+    if type_to_validate.contains('.') {
         return true;
     }
     VALID_TYPES.contains(&type_to_validate)
@@ -173,7 +173,7 @@ fn get_type_return_param(
         logger.print_warning("Has different types");
         logger.print_complementary_info();
     } else {
-        type_to_give = types.iter().next().map(|s| s.clone());
+        type_to_give = types.iter().next().cloned();
     }
 
     if let Some(type_to_give) = &type_to_give {
@@ -210,7 +210,7 @@ fn check_syntax(
             for (key, value) in conversion_map.iter() {
                 //fix return type only
                 let regex_pattern = format!(r"( \|\s*)({})(\s*\|\s&(#8592|rarr);)", key);
-                let replacement: String = String::from(format!("${{1}}{}${{3}}", value));
+                let replacement: String = format!("${{1}}{}${{3}}", value);
                 let re = Regex::new(regex_pattern.as_str())?;
                 params = re
                     .replace_all(params.as_str(), replacement.as_str())
@@ -231,7 +231,7 @@ fn check_syntax(
                             .to_string();
                         if let Some(value) = conversion_map.get_key_value(new_type) {
                             let re = Regex::new(format!(r"(:\s)({})", new_type).as_str())?;
-                            let replacement: String = String::from(format!("${{1}}{}", value.1));
+                            let replacement: String = format!("${{1}}{}", value.1);
                             new_syntax = re
                                 .replace_all(new_syntax.as_str(), replacement.as_str())
                                 .to_string();
@@ -240,17 +240,16 @@ fn check_syntax(
                     }
                 }
             } else if let Some(type_) = param.and_then(|p| p.param) {
-                if !validate_type(type_.as_str()) && conversion_map.contains_key(type_.as_str()) {
-                    if args.fix {
-                        if let Some(value) = conversion_map.get_key_value(&type_) {
-                            let re = Regex::new(format!(r"(:\s)({})", type_).as_str())?;
-                            let replacement: String = String::from(format!("${{1}}{}", value.1));
-                            let new_syntax =
-                                re.replace_all(syntax, replacement.as_str()).to_string();
+                if !validate_type(type_.as_str())
+                    && conversion_map.contains_key(type_.as_str())
+                    && args.fix
+                {
+                    if let Some(value) = conversion_map.get_key_value(&type_) {
+                        let re = Regex::new(format!(r"(:\s)({})", type_).as_str())?;
+                        let replacement: String = format!("${{1}}{}", value.1);
+                        let new_syntax = re.replace_all(syntax, replacement.as_str()).to_string();
 
-                            new_content =
-                                new_content.replace(syntax, new_syntax.to_string().as_str());
-                        }
+                        new_content = new_content.replace(syntax, new_syntax.to_string().as_str());
                     }
                 }
             }
@@ -275,12 +274,12 @@ fn main() -> Result<(), anyhow::Error> {
         ("Inteiro longo".to_string(), "Integer".to_string()),
         ("Inteiro".to_string(), "Integer".to_string()),
         ("object".to_string(), "Object".to_string()),
-        ("Entier long".to_string(), "Integer".to_string())
+        ("Entier long".to_string(), "Integer".to_string()),
     ]));
 
     for (key, value) in conversion_map.clone().iter() {
         let regex_pattern = format!(r"(\|\s*)({})(\s*\|)", key);
-        let replacement: String = String::from(format!("${{1}}{}${{3}}", value));
+        let replacement: String = format!("${{1}}{}${{3}}", value);
         types.push((Regex::new(regex_pattern.as_str())?, replacement));
     }
 

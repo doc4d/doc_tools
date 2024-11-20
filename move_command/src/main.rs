@@ -1,79 +1,150 @@
 use clap::Parser;
+use regex::Regex;
 use std::fs;
+use std::path::Path;
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
     #[arg(short, long)]
     file_name: String,
+
+    #[arg(short, long)]
+    doc_folder: String,
+}
+
+fn create_regex(file_name: &str, extension: &str) -> Result<Regex, anyhow::Error> {
+    Ok(Regex::new(
+        format!(
+            r#"\[.*?\]\(([^ ]*{}\.{}?)( "(.+)")?\)"#,
+            file_name, extension
+        )
+        .as_str(),
+    )?)
+}
+
+fn process_files<F>(pattern: &str, regex: &Regex, modify_content: F) -> Result<(), anyhow::Error>
+where
+    F: Fn(&str, &Regex) -> Option<String>,
+{
+    for entry in glob::glob(pattern)? {
+        let path = entry?;
+        let content = fs::read_to_string(&path)?;
+        if let Some(new_content) = modify_content(&content, regex) {
+            fs::write(&path, new_content)?;
+            println!("Updated: {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+fn replace_links(
+    content: &str,
+    regex: &Regex,
+    link_filter: impl Fn(&str) -> bool,
+    link_modifier: impl Fn(&str) -> String,
+) -> Option<String> {
+    let mut new_content = content.to_string();
+    let mut has_changed = false;
+    let mut replacements = Vec::new();
+
+    let mut start = 0;
+    while let Some(caps) = regex.captures(&new_content[start..]) {
+        let full_match = caps.get(1).unwrap();
+        let link = caps.get(1).map(|m| m.as_str()).unwrap();
+
+        if link_filter(link) {
+            let new_link = link_modifier(link);
+            replacements.push((
+                start + full_match.start(),
+                start + full_match.end(),
+                new_link,
+            ));
+            has_changed = true;
+        }
+
+        start += full_match.end();
+    }
+
+    for (start, end, replacement) in replacements.into_iter().rev() {
+        new_content.replace_range(start..end, &replacement);
+    }
+
+    if has_changed {
+        Some(new_content)
+    } else {
+        None
+    }
 }
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
-    let extension = args.file_name.split('.').last().unwrap_or("md");
-    let regex_link =
-        regex::Regex::new(format!(r"\[[^\]]+\]\(([^)]+{}?)\)", args.file_name).as_str())?;
-
-    for entry in glob::glob("./**/commands-legacy/**/*.md")? {
-        let path = entry?;
-        let content = fs::read_to_string(path.as_path())?;
-        let mut new_content = content.clone();
-        while let Some(caps) = regex_link.captures(&content) {
-            if let Some(link) = caps.get(1).map(|m| m.as_str()) {
-                if link.starts_with("../commands") {
-                    continue;
-                }
-                let new_link = format!("../commands/{}", link);
-                new_content = content.replace(link, &new_link);
-            }
-        }
-        fs::write(path.as_path(), new_content)?;
+    let mut doc_folder = args.doc_folder;
+    if doc_folder.ends_with('/') {
+        doc_folder.pop();
     }
 
-    for entry in glob::glob(format!("./**/commands/**/*.{}", extension).as_str())? {
-        let path = entry?;
-        let content = fs::read_to_string(path.as_path())?;
-        let mut new_content = content.clone();
-        while let Some(caps) = regex_link.captures(&content) {
-            if let Some(link) = caps.get(1).map(|m| m.as_str()) {
-                if !link.contains("../commands-legacy/") {
-                    continue;
-                }
-                let new_link = link.replace("../commands-legacy/", "");
-                new_content = content.replace(link, &new_link);
-            }
-        }
-        fs::write(path.as_path(), new_content)?;
-    }
+    let mut split = args.file_name.split('.');
+    let file_name_without_extension = split.next().unwrap_or(&args.file_name);
+    let extension = split.next().unwrap_or("md");
 
-    for entry in glob::glob(format!("./**/*.{}", extension).as_str())? {
-        let path = entry?;
-        let path_str = path.as_path().to_str().unwrap();
-        if path_str.contains("/commands-legacy/") || path_str.contains("/commands/") {
-            continue;
-        }
-        let content = fs::read_to_string(path.as_path())?;
-        let mut new_content = content.clone();
-        while let Some(caps) = regex_link.captures(&content) {
-            if let Some(link) = caps.get(1).map(|m| m.as_str()) {
-                if link.contains("/commands-legacy/") {
-                    continue;
-                }
-                let new_link = link.replace("/commands-legacy/", "/commands/");
-                new_content = content.replace(link, &new_link);
-            }
-        }
-        fs::write(path.as_path(), new_content)?;
-    }
+    let regex_link = create_regex(file_name_without_extension, extension)?;
 
-    for entry in glob::glob(
-        format!(
-            "i18n/langue/docusaurus-plugin-content-docs/*/commands-legacy/**/{}",
-            args.file_name
-        )
-        .as_str(),
-    )? {
+    println!("{}/**/commands-legacy/*/*.md", doc_folder);
+    println!("Add '../commands/' to the links in commands-legacy");
+
+    process_files(
+        &format!("{}/**/commands-legacy/*.md", doc_folder),
+        &regex_link,
+        |content, regex| {
+            replace_links(
+                content,
+                regex,
+                |link| !link.starts_with("../commands"),
+                |link| format!("../commands/{}", link),
+            )
+        },
+    )?;
+
+    println!("Remove '../commands-legacy/' from the links in commands folder");
+
+    process_files(
+        &format!("{}/docs/**/commands/*.{}", doc_folder, extension),
+        &regex_link,
+        |content, regex| {
+            replace_links(
+                content,
+                regex,
+                |link| link.contains("../commands-legacy/"),
+                |link| link.replace("../commands-legacy/", ""),
+            )
+        },
+    )?;
+
+    println!("Replace '/commands-legacy/' to '/commands/' in the other files");
+
+    process_files(
+        &format!("{}/docs/**/*.{}", doc_folder, extension),
+        &regex_link,
+        |content, regex| {
+            replace_links(
+                content,
+                regex,
+                |link| !link.contains("/commands-legacy/"),
+                |link| link.replace("/commands-legacy/", "/commands/"),
+            )
+        },
+    )?;
+
+    println!("Remove specific files in commands-legacy");
+
+    for entry in glob::glob(&format!(
+        "{}/**/commands-legacy/{}",
+        doc_folder, args.file_name
+    ))? {
         let path = entry?;
-        fs::remove_file(path.as_path())?;
+        fs::remove_file(&path)?;
+        println!("Removed: {}", path.display());
     }
 
     Ok(())
