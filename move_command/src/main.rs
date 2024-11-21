@@ -170,7 +170,7 @@ fn main() -> Result<(), anyhow::Error> {
             replace_links(
                 content,
                 regex,
-                |link| !link.contains("/commands-legacy/"),
+                |link| link.contains("/commands-legacy/"),
                 |link| link.replace("/commands-legacy/", "/commands/"),
             )
         },
