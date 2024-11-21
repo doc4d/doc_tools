@@ -1,7 +1,7 @@
 use clap::Parser;
+use colored::Colorize;
 use regex::Regex;
 use std::fs;
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -65,12 +65,14 @@ fn replace_links(
 
         if link_filter(link) {
             let new_link = link_modifier(link);
-            replacements.push((
-                start + full_match.start(),
-                start + full_match.end(),
-                new_link,
-            ));
-            has_changed = true;
+            if new_link != link {
+                replacements.push((
+                    start + full_match.start(),
+                    start + full_match.end(),
+                    new_link,
+                ));
+                has_changed = true;
+            }
         }
 
         start += full_match.end();
@@ -107,7 +109,10 @@ fn main() -> Result<(), anyhow::Error> {
     let regex_link = create_regex(&file_name_without_extension, &extension)?;
 
     println!("{}/**/commands-legacy/*/*.md", doc_folder);
-    println!("Add '../commands/' to the links in commands-legacy");
+    println!(
+        "{}",
+        "Add '../commands/' to the links in commands-legacy".green()
+    );
 
     process_files(
         vec![
@@ -128,8 +133,10 @@ fn main() -> Result<(), anyhow::Error> {
             )
         },
     )?;
-
-    println!("Remove '../commands-legacy/' from the links in commands folder");
+    println!(
+        "{}",
+        "Remove '../commands-legacy/' from the links in commands folder".green()
+    );
 
     process_files(
         vec![format!("{}/docs/**/commands/*.{}", doc_folder, extension)],
@@ -144,8 +151,10 @@ fn main() -> Result<(), anyhow::Error> {
             )
         },
     )?;
-
-    println!("Replace '/commands-legacy/' to '/commands/' in the other files");
+    println!(
+        "{}",
+        "Replace '/commands-legacy/' to '/commands/' in the other files".green()
+    );
 
     process_files(
         vec![format!("{}/docs/**/*.{}", doc_folder, extension)],
@@ -166,9 +175,7 @@ fn main() -> Result<(), anyhow::Error> {
             )
         },
     )?;
-
-    println!("Remove specific files in commands-legacy");
-
+    println!("{}", "Remove specific files in commands-legacy".green());
     for pattern in [
         format!("{}/docs/**/commands-legacy/{}", doc_folder, args.file_name),
         format!(
