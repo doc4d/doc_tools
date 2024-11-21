@@ -2,6 +2,7 @@
 name = "move_command"
 version = "0.1.0"
 edition = "2021"
+exclude = ["tests/"]
 
 [dependencies]
 glob = "0.3.1"

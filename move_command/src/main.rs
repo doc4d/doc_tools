@@ -1,7 +1,6 @@
 use clap::Parser;
 use regex::Regex;
 use std::fs;
-use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -78,6 +77,14 @@ fn replace_links(
     }
 }
 
+fn get_split_file_name(file: &str) -> (String, String) {
+    let mut split = file.split('.');
+    (
+        split.next().unwrap_or(file).to_string(),
+        split.next().unwrap_or("md").to_string(),
+    )
+}
+
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
     let mut doc_folder = args.doc_folder;
@@ -85,11 +92,9 @@ fn main() -> Result<(), anyhow::Error> {
         doc_folder.pop();
     }
 
-    let mut split = args.file_name.split('.');
-    let file_name_without_extension = split.next().unwrap_or(&args.file_name);
-    let extension = split.next().unwrap_or("md");
+    let (file_name_without_extension, extension) = get_split_file_name(&args.file_name);
 
-    let regex_link = create_regex(file_name_without_extension, extension)?;
+    let regex_link = create_regex(&file_name_without_extension, &extension)?;
 
     println!("{}/**/commands-legacy/*/*.md", doc_folder);
     println!("Add '../commands/' to the links in commands-legacy");
@@ -149,4 +154,61 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_split() {
+        let (file_name_without_extension, extension) = get_split_file_name("accept.md");
+        assert_eq!(file_name_without_extension, "accept");
+        assert_eq!(extension, "md");
+    }
+
+    #[test]
+    fn test_regex() {
+        let (file_name_without_extension, extension) = get_split_file_name("accept.md");
+        let _regex_link = match create_regex(&file_name_without_extension, &extension) {
+            Ok(regex) => regex,
+            Err(e) => {
+                panic!("{}", e);
+            }
+        };
+    }
+
+    #[test]
+    fn test_replace_links() {
+        println!("test");
+        let (file_name_without_extension, extension) = get_split_file_name("accept.md");
+        let regex_link = match create_regex(&file_name_without_extension, &extension) {
+            Ok(regex) => regex,
+            Err(e) => {
+                panic!("{}", e);
+            }
+        };
+
+        let d = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let file_path = d.join("tests").join("INPUT").join("command-index.md");
+        let content = std::fs::read_to_string(&file_path).unwrap_or("".to_string());
+        println!("{}", &content);
+        assert!(
+            !content.is_empty(),
+            "file content: {:?} from {:?}",
+            &content,
+            &file_path
+        );
+
+        let new_content = replace_links(
+            &content,
+            &regex_link,
+            |link| link.contains("../commands-legacy/"),
+            |link| link.replace("../commands-legacy/", ""),
+        )
+        .unwrap_or("".to_string());
+        assert!(!new_content.is_empty());
+        let file_path = d.join("tests").join("OUTPUT").join("command-index.md");
+        let output = std::fs::read_to_string(&file_path).unwrap_or("".to_string());
+        assert_eq!(new_content, output);
+    }
 }

@@ -24,3 +24,4 @@ jobs:
             !target/release/.cargo-lock
             !target/release/*.d
             !target/release/*.pdb
+            !target/release/assets
