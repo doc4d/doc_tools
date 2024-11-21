@@ -23,18 +23,28 @@ fn create_regex(file_name: &str, extension: &str) -> Result<Regex, anyhow::Error
     .map_err(|err| anyhow::Error::msg(err.to_string()))
 }
 
-fn process_files<F>(pattern: &str, regex: &Regex, modify_content: F) -> Result<(), anyhow::Error>
+fn process_files<F>(
+    patterns: Vec<String>,
+    regex: &Regex,
+    path_filter: impl Fn(&std::path::Path) -> bool,
+    modify_content: F,
+) -> Result<(), anyhow::Error>
 where
     F: Fn(&str, &Regex) -> Option<String>,
 {
-    for entry in glob::glob(pattern)? {
-        let path = entry?;
-        let content = fs::read_to_string(&path)?;
-        if let Some(new_content) = modify_content(&content, regex) {
-            fs::write(&path, new_content)?;
-            println!("Updated: {}", path.display());
+    for pattern in patterns {
+        for entry in glob::glob(pattern.as_str())? {
+            let path = entry?;
+            let content = fs::read_to_string(&path)?;
+            if path_filter(path.as_path()) {
+                if let Some(new_content) = modify_content(&content, regex) {
+                    fs::write(&path, new_content)?;
+                    println!("Updated: {}", path.display());
+                }
+            }
         }
     }
+
     Ok(())
 }
 
@@ -100,8 +110,15 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Add '../commands/' to the links in commands-legacy");
 
     process_files(
-        &format!("{}/**/commands-legacy/*.md", doc_folder),
+        vec![
+            format!("{}/docs/**/commands-legacy/*.md", doc_folder),
+            format!(
+                "{}/i18n/*/docusaurus-plugin-content-docs/current/**/commands-legacy/*.md",
+                doc_folder
+            ),
+        ],
         &regex_link,
+        |_path| true,
         |content, regex| {
             replace_links(
                 content,
@@ -115,8 +132,9 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Remove '../commands-legacy/' from the links in commands folder");
 
     process_files(
-        &format!("{}/docs/**/commands/*.{}", doc_folder, extension),
+        vec![format!("{}/docs/**/commands/*.{}", doc_folder, extension)],
         &regex_link,
+        |_path| true,
         |content, regex| {
             replace_links(
                 content,
@@ -130,8 +148,15 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Replace '/commands-legacy/' to '/commands/' in the other files");
 
     process_files(
-        &format!("{}/docs/**/*.{}", doc_folder, extension),
+        vec![format!("{}/docs/**/*.{}", doc_folder, extension)],
         &regex_link,
+        |path| {
+            let p = path
+                .to_str()
+                .unwrap_or("")
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            !p.contains("/commands/") && !p.contains("/commands-legacy/")
+        },
         |content, regex| {
             replace_links(
                 content,
@@ -144,13 +169,18 @@ fn main() -> Result<(), anyhow::Error> {
 
     println!("Remove specific files in commands-legacy");
 
-    for entry in glob::glob(&format!(
-        "{}/**/commands-legacy/{}",
-        doc_folder, args.file_name
-    ))? {
-        let path = entry?;
-        fs::remove_file(&path)?;
-        println!("Removed: {}", path.display());
+    for pattern in [
+        format!("{}/docs/**/commands-legacy/{}", doc_folder, args.file_name),
+        format!(
+            "{}/i18n/*/docusaurus-plugin-content-docs/current/**/commands-legacy/{}",
+            doc_folder, args.file_name
+        ),
+    ] {
+        for entry in glob::glob(&pattern)? {
+            let path = entry?;
+            fs::remove_file(&path)?;
+            println!("Removed: {}", path.display());
+        }
     }
 
     Ok(())
