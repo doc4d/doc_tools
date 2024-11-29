@@ -120,7 +120,12 @@ fn main() -> Result<(), anyhow::Error> {
             if let Some(mut path)= entry?.to_str().map(|str| str.replace(std::path::MAIN_SEPARATOR_STR, "/"))
             {
                 path.push('/');
-                find_unused_images(&path, args.verbose)?;
+                let vec =find_unused_images(&path, args.verbose)?;
+                if args.fix {
+                    for path in vec {
+                        std::fs::remove_file(path)?;
+                    }
+                }
             }
         }   
     }
