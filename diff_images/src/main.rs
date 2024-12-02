@@ -25,7 +25,8 @@ struct Args {
     verbose: bool,
 }
 
-fn find_unused_images(directory : &str, verbose : bool) -> Result<Vec<PathBuf>, anyhow::Error> {
+fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, anyhow::Error> {
+    println!("Directory: {}", directory);
     let mut list_to_delete = Vec::new();
     let asset_folder = format!("assets{}", std::path::MAIN_SEPARATOR_STR);
     let asset_folder_posix = "assets/".to_string();
@@ -101,15 +102,17 @@ fn find_unused_images(directory : &str, verbose : bool) -> Result<Vec<PathBuf>, 
             total_size += sizes;
         }
     }
-    println!(
-        "{} images not used {} {}",
-        counter,
-        counter as f64 / number_images as f64,
-        (total_size / (1024 * 1024)) as f64
-    );
+    if counter > 0 {
+        println!(
+            "{} images not used {} {}",
+            counter,
+            counter as f64 / number_images as f64,
+            (total_size / (1024 * 1024)) as f64
+        );
+    }
+
     Ok(list_to_delete)
 }
-
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
@@ -117,17 +120,19 @@ fn main() -> Result<(), anyhow::Error> {
 
     for directory in &directories {
         for entry in glob(directory)? {
-            if let Some(mut path)= entry?.to_str().map(|str| str.replace(std::path::MAIN_SEPARATOR_STR, "/"))
+            if let Some(mut path) = entry?
+                .to_str()
+                .map(|str| str.replace(std::path::MAIN_SEPARATOR_STR, "/"))
             {
                 path.push('/');
-                let vec =find_unused_images(&path, args.verbose)?;
+                let vec = find_unused_images(&path, args.verbose)?;
                 if args.fix {
                     for path in vec {
                         std::fs::remove_file(path)?;
                     }
                 }
             }
-        }   
+        }
     }
 
     Ok(())
