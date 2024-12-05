@@ -28,6 +28,7 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
     let regex: Regex = Regex::new(r#"\[.*?\]\(([^ \)]*assets\/.*?)( "(.+)")?\)"#)?;
     let mut files_map: HashSet<PathBuf> = HashSet::new();
     let mut images_used_set: HashSet<PathBuf> = HashSet::new();
+    let mut has_invalid_links = false;
 
     for entry in glob(format!("{}**/assets/**/*.png", directory).as_str())?
         .chain(glob(format!("{}**/assets/**/*.PNG", directory).as_str())?)
@@ -67,7 +68,8 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
                                     images_used_set.insert(final_path);
                                 }
                                 Err(_)=>{
-                                    println!("Error with image path {}", link.red())
+                                    has_invalid_links = true;
+                                    println!("Error with image path {} {}", link.red(), path.as_path().display())
                                 }
                             }
 
@@ -87,7 +89,10 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
     println!("{}","To DELETE:".red());
     for image in files_map {
         println!("{} image not used", image.as_path().display());
-        list_to_delete.push(image.clone());
+        if !has_invalid_links
+        {
+            list_to_delete.push(image.clone());
+        }
     }
 
     Ok(list_to_delete)
