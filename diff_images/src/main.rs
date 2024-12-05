@@ -3,12 +3,8 @@ use colored::Colorize;
 use glob::glob;
 use regex::Regex;
 use std::path::PathBuf;
-use std::vec;
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    io::Read,
-};
+use std::{collections::HashSet, fs::File, io::Read};
+use std::fs;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -28,33 +24,20 @@ struct Args {
 fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, anyhow::Error> {
     println!("Directory: {}", directory);
     let mut list_to_delete = Vec::new();
-    let asset_folder = format!("assets{}", std::path::MAIN_SEPARATOR_STR);
-    let asset_folder_posix = "assets/".to_string();
 
     let regex: Regex = Regex::new(r#"\[.*?\]\(([^ \)]*assets\/.*?)( "(.+)")?\)"#)?;
-    let mut files_map: HashMap<String, HashSet<PathBuf>> = HashMap::new();
-    let mut images_used_set: HashSet<String> = HashSet::new();
-    let mut number_images = 0;
+    let mut files_map: HashSet<PathBuf> = HashSet::new();
+    let mut images_used_set: HashSet<PathBuf> = HashSet::new();
+
     for entry in glob(format!("{}**/assets/**/*.png", directory).as_str())?
         .chain(glob(format!("{}**/assets/**/*.PNG", directory).as_str())?)
     {
         match entry {
             Ok(path) => {
-                if let Some((_, name)) = path
-                    .as_path()
-                    .to_str()
-                    .map(|str| str.rsplit_once(asset_folder.as_str()))
-                    .flatten()
-                {
-                    let name = name.replace(std::path::MAIN_SEPARATOR_STR, "/");
-                    files_map
-                        .entry(name.to_string())
-                        .or_insert(HashSet::from_iter(vec![path.clone()]))
-                        .insert(path.clone());
-                    if verbose {
-                        println!("Image found {} {}", &name, path.display());
-                    }
-                    number_images += 1;
+
+                files_map.insert(path.canonicalize()?);
+                if verbose {
+                    println!("Image found {}", path.display());
                 }
             }
             Err(e) => println!("{:?}", e),
@@ -66,49 +49,45 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
         match entry {
             Ok(path) => {
                 let mut content = String::new();
-                let _ = File::open(path)?.read_to_string(&mut content);
+                let _ = File::open(path.as_path())?.read_to_string(&mut content);
                 let mut start = 0;
                 while let Some(caps) = regex.captures(&content[start..]) {
-                    let full_match = caps.get(1).unwrap();
+                    if let Some(full_match) = caps.get(1) {
+                        let link = caps.get(1).map(|m| m.as_str()).unwrap_or("");
 
-                    let link = caps.get(1).map(|m| m.as_str()).unwrap();
-                    if let Some((_, image)) = link.split_once(&asset_folder_posix) {
-                        if verbose {
-                            println!("Link found {}", &image);
+                        let temp = path.as_path().parent();
+                        if let Some(temp) = temp {
+                            let final_path = temp.join(std::path::Path::new(link));
+                            match fs::canonicalize(final_path) {
+                                Ok(final_path)=> 
+                                {
+                                    if verbose {
+                                        println!("Link found {}", &final_path.as_path().display());
+                                    }
+                                    images_used_set.insert(final_path);
+                                }
+                                Err(_)=>{
+                                    println!("Error with image path {}", link.red())
+                                }
+                            }
+
                         }
-                        images_used_set.insert(image.to_string());
+                        start += full_match.end();
                     }
-                    start += full_match.end();
                 }
             }
             Err(e) => println!("{:?}", e),
         }
     }
-    let mut total_size = 0;
-    let mut counter = 0;
-    for (name, paths) in files_map {
-        if images_used_set.contains(&name) {
-        } else {
-            counter += paths.len();
-            let sizes = paths
-                .iter()
-                .fold(0, |acc, path| acc + std::fs::metadata(path).unwrap().len());
-
-            for path in &paths {
-                println!("{} To Delete: {}", name.red(), path.display());
-                list_to_delete.push(path.clone());
-            }
-
-            total_size += sizes;
+    for path in images_used_set {
+        if files_map.contains(&path) {
+            files_map.remove(&path);
         }
     }
-    if counter > 0 {
-        println!(
-            "{} images not used {} {}",
-            counter,
-            counter as f64 / number_images as f64,
-            (total_size / (1024 * 1024)) as f64
-        );
+    println!("{}","To DELETE:".red());
+    for image in files_map {
+        println!("{} image not used", image.as_path().display());
+        list_to_delete.push(image.clone());
     }
 
     Ok(list_to_delete)
@@ -117,7 +96,7 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
 fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
     let directories: Vec<String> = args.paths;
-
+    let mut counter = 0;
     for directory in &directories {
         for entry in glob(directory)? {
             if let Some(mut path) = entry?
@@ -126,6 +105,7 @@ fn main() -> Result<(), anyhow::Error> {
             {
                 path.push('/');
                 let vec = find_unused_images(&path, args.verbose)?;
+                counter+=vec.len();
                 if args.fix {
                     for path in vec {
                         std::fs::remove_file(path)?;
@@ -134,6 +114,7 @@ fn main() -> Result<(), anyhow::Error> {
             }
         }
     }
+    println!("Number images not used: {}", counter);
 
     Ok(())
 }
