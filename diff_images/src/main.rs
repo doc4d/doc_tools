@@ -2,9 +2,9 @@ use clap::Parser;
 use colored::Colorize;
 use glob::glob;
 use regex::Regex;
+use std::fs;
 use std::path::PathBuf;
 use std::{collections::HashSet, fs::File, io::Read};
-use std::fs;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -35,7 +35,6 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
     {
         match entry {
             Ok(path) => {
-
                 files_map.insert(path.canonicalize()?);
                 if verbose {
                     println!("Image found {}", path.display());
@@ -52,29 +51,36 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
                 let mut content = String::new();
                 let _ = File::open(path.as_path())?.read_to_string(&mut content);
                 let mut start = 0;
-                while let Some(caps) = regex.captures(&content[start..]) {
-                    if let Some(full_match) = caps.get(1) {
-                        let link = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-
-                        let temp = path.as_path().parent();
-                        if let Some(temp) = temp {
-                            let final_path = temp.join(std::path::Path::new(link));
-                            match fs::canonicalize(final_path) {
-                                Ok(final_path)=> 
-                                {
-                                    if verbose {
-                                        println!("Link found {}", &final_path.as_path().display());
+                let temp = path.as_path().parent();
+                if let Some(temp) = temp {
+                    while let Some(caps) = regex.captures(&content[start..]) {
+                        if let Some(full_match) = caps.get(1) {
+                            let link = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            if !link.starts_with("http") {
+                                let final_path = temp.join(std::path::Path::new(link));
+                                match fs::canonicalize(final_path) {
+                                    Ok(final_path) => {
+                                        if verbose {
+                                            println!(
+                                                "Link found {}",
+                                                &final_path.as_path().display()
+                                            );
+                                        }
+                                        images_used_set.insert(final_path);
                                     }
-                                    images_used_set.insert(final_path);
-                                }
-                                Err(_)=>{
-                                    has_invalid_links = true;
-                                    println!("Error with image path {} {}", link.red(), path.as_path().display())
+                                    Err(_) => {
+                                        has_invalid_links = true;
+                                        println!(
+                                            "Error with image path {} {}",
+                                            link.red(),
+                                            path.as_path().display()
+                                        )
+                                    }
                                 }
                             }
 
+                            start += full_match.end();
                         }
-                        start += full_match.end();
                     }
                 }
             }
@@ -86,12 +92,17 @@ fn find_unused_images(directory: &str, verbose: bool) -> Result<Vec<PathBuf>, an
             files_map.remove(&path);
         }
     }
-    println!("{}","To DELETE:".red());
-    for image in files_map {
-        println!("{} image not used", image.as_path().display());
-        if !has_invalid_links
-        {
-            list_to_delete.push(image.clone());
+    if !files_map.is_empty() {
+        if verbose {
+            println!("{}", "To DELETE:".red());
+        }
+        for image in files_map {
+            if verbose {
+                println!("{} image not used", image.as_path().display());
+            }
+            if !has_invalid_links {
+                list_to_delete.push(image.clone());
+            }
         }
     }
 
@@ -110,7 +121,7 @@ fn main() -> Result<(), anyhow::Error> {
             {
                 path.push('/');
                 let vec = find_unused_images(&path, args.verbose)?;
-                counter+=vec.len();
+                counter += vec.len();
                 if args.fix {
                     for path in vec {
                         std::fs::remove_file(path)?;
