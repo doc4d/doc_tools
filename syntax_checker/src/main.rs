@@ -3,8 +3,7 @@ use colored::Colorize;
 use regex::Regex;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::{collections::HashSet, fs, path::Path};
+use std::{fs, path::Path};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -19,16 +18,63 @@ struct Args {
 #[derive(PartialEq, Debug)]
 struct Param {
     pub name: Option<String>,
-    pub param: Option<String>,
+    pub param: Option<Vec<String>>,
 }
 
 impl Param {
-    #[cfg(test)]
     fn new_from(name: Option<&str>, param: Option<&str>) -> Self {
         Self {
             name: name.map(|s| s.to_string()),
-            param: param.map(|s| s.to_string()),
+            param: param.map(|s| {
+                s.to_string()
+                    .split(",")
+                    .map(|s| s.trim().to_string())
+                    .collect()
+            }),
         }
+    }
+}
+
+struct Parameters {
+    pub return_param: Option<Param>,
+    pub params: Vec<Param>,
+}
+
+/*
+Example array of parameters
+|Parameter|Type||Description|
+|---------|--- |:---:|------|
+|option|Integer|->|`ck resolve pointers`: resolve pointers before copying,<br/>`ck shared`: return a shared collection|
+|groupWithCol |Collection|->|Shared collection to be grouped with the resulting collection|
+|groupWithObj |Object|->|Shared object to be grouped with the resulting collection|
+|Result|Collection|<-|Deep copy of the original collection|
+
+*/
+impl Parameters {
+    fn new(in_array: &str) -> Result<Self, anyhow::Error> {
+        let mut params = vec![];
+        let mut return_param = None;
+        let find_params_regex: Regex = Regex::new(r"\|(.*)\|(.*)\|(.*)\|(.*)\|")?;
+        for (_, [name, param, return_type, _desc]) in find_params_regex
+            .captures_iter(in_array)
+            .map(|c| c.extract())
+        {
+            if return_type.contains("<-")
+                || return_type.contains("&larr;")
+                || return_type.contains("&#8592;")
+            {
+                return_param = Some(Param::new_from(Some(name.trim()), Some(param.trim())));
+            } else if return_type.contains("->")
+                || return_type.contains("&rarr;")
+                || return_type.contains("&#8594;")
+            {
+                params.push(Param::new_from(Some(name.trim()), Some(param.trim())));
+            }
+        }
+        Ok(Self {
+            return_param,
+            params,
+        })
     }
 }
 
@@ -47,6 +93,27 @@ static VALID_TYPES: &[&str] = &[
     "Pointer",
     "Picture",
     "Null",
+    //other types
+    "Operator",
+    "Array",
+    "Field",
+    "Table",
+    "*",
+    "Number",
+    "Variable",
+    "Expression",
+    "Array integer",
+    "2D Integer array",
+    "2D Real array",
+    "Date array",
+    "Time array",
+    "Boolean array",
+    "Object array",
+    "Collection array",
+    "Picture array",
+    "Pointer array",
+    "Real array",
+    "Text array",
 ];
 
 struct Logger {
@@ -82,36 +149,6 @@ fn get_params(content: &str, command: &str) -> Result<String, anyhow::Error> {
     Ok(result.join(""))
 }
 
-fn get_type(
-    in_name: &str,
-    in_params: &str,
-    logger: &Logger,
-) -> Result<Option<String>, anyhow::Error> {
-    let mut function_result: Option<String> = None;
-
-    let find_params_regex: Regex =
-        Regex::new(format!(r"{}\s?\|\s?(.*?)\|", in_name.trim()).as_str())?;
-    let mut return_types = vec![];
-    for (_, [return_type]) in find_params_regex
-        .captures_iter(in_params)
-        .map(|c| c.extract())
-    {
-        return_types.push(return_type);
-        if return_type.contains(',') {
-            function_result = Some("any".to_owned());
-        } else {
-            function_result = Some(return_type.trim().to_string());
-        }
-    }
-
-    if return_types.len() > 1 {
-        logger.print_warning("Multiple return types");
-        logger.print_complementary_info();
-        return Ok(None);
-    }
-    Ok(function_result)
-}
-
 fn get_syntax_type_return_param(syntax: &str) -> Option<Param> {
     //ASCII
     let mut last_stop = syntax.len();
@@ -135,7 +172,7 @@ fn get_syntax_type_return_param(syntax: &str) -> Option<Param> {
 
     let param = Param {
         name,
-        param: type_name,
+        param: type_name.map(|t| vec![t]),
     };
 
     if param.name.is_none() && param.param.is_none() {
@@ -151,39 +188,29 @@ fn validate_type(type_to_validate: &str) -> bool {
     VALID_TYPES.contains(&type_to_validate)
 }
 
-fn get_type_return_param(
-    params: &str,
-    syntaxes: &str,
-    logger: Arc<Logger>,
-) -> Result<Option<String>, anyhow::Error> {
-    let mut types: HashSet<String> = HashSet::new();
-    for syntax in syntaxes.split("</br>") {
-        let return_param = get_syntax_type_return_param(syntax);
-        if let Some(ending) = return_param.as_ref().and_then(|p| p.name.clone()) {
-            if let Some(new_type) = get_type(ending.as_str(), params, &logger)? {
-                types.insert(new_type);
+fn check_params_array(param: &Parameters, logger: &Logger) -> bool {
+    let mut ok = true;
+    for p in &param.params {
+        if let Some(param_type) = &p.param {
+            for t in param_type {
+                if !validate_type(t.as_str()) {
+                    logger.print_warning(format!("'{}' Invalid type", t).as_str());
+                    ok = false;
+                }
             }
-        } else if let Some(type_) = return_param.and_then(|p| p.param) {
-            types.insert(type_);
         }
     }
-
-    let mut type_to_give: Option<String> = Some("any".to_string());
-    if types.len() > 1 {
-        logger.print_warning("Has different types");
-        logger.print_complementary_info();
-    } else {
-        type_to_give = types.iter().next().cloned();
-    }
-
-    if let Some(type_to_give) = &type_to_give {
-        if !validate_type(type_to_give) {
-            logger.print_warning(format!("Invalid type {}", type_to_give).as_str());
-            logger.print_complementary_info();
+    if let Some(p) = &param.return_param {
+        if let Some(param_type) = &p.param {
+            for t in param_type {
+                if !validate_type(t.as_str()) {
+                    logger.print_warning(format!("'{}' Invalid type", t).as_str());
+                    ok = false;
+                }
+            }
         }
     }
-
-    Ok(type_to_give)
+    ok
 }
 
 fn check_syntax(
@@ -204,32 +231,44 @@ fn check_syntax(
             path: path.display().to_string(),
         });
 
-        let mut params = get_params(content, command)?;
-        let old_params = params.clone();
+        let mut string_params = get_params(content, command)?;
+        let old_params = string_params.clone();
         if args.fix {
             for (key, value) in conversion_map.iter() {
                 //fix return type only
                 let regex_pattern = format!(r"( \|\s*)({})(\s*\|\s&(#8592|rarr);)", key);
                 let replacement: String = format!("${{1}}{}${{3}}", value);
                 let re = Regex::new(regex_pattern.as_str())?;
-                params = re
-                    .replace_all(params.as_str(), replacement.as_str())
+                string_params = re
+                    .replace_all(string_params.as_str(), replacement.as_str())
                     .to_string();
             }
-            new_content = new_content.replace(old_params.as_str(), params.to_string().as_str());
+            new_content =
+                new_content.replace(old_params.as_str(), string_params.to_string().as_str());
         }
-        let type_to_give = get_type_return_param(params.as_str(), syntaxes, logger.clone())?;
+        let params = Parameters::new(string_params.as_str())?;
+
+        //Check only english, types are translated in other languages
+        let str_path = path.to_str().unwrap_or("");
+        if str_path.contains("i18n/en/") || !str_path.contains("i18n") {
+            if !check_params_array(&params, &logger) {
+                logger.print_complementary_info();
+            }
+        }
+
+
+        let type_to_give = params.return_param.and_then(|p| p.param.clone());
         for syntax in syntaxes.split("</br>") {
             let param = get_syntax_type_return_param(syntax);
             if let Some(ending) = param.as_ref().and_then(|p| p.name.clone()) {
-                if let Some(new_type) = &type_to_give {
+                if let Some(new_type) = type_to_give.clone().and_then(|t| t.first().cloned()) {
                     if args.fix {
                         let replace_ending_regex =
                             Regex::new(format!(r"->\s?{}", ending).as_str())?;
                         let mut new_syntax = replace_ending_regex
-                            .replace(syntax, format!(": {}", new_type).as_str())
+                            .replace(syntax, format!(": {}", &new_type).as_str())
                             .to_string();
-                        if let Some(value) = conversion_map.get_key_value(new_type) {
+                        if let Some(value) = conversion_map.get_key_value(new_type.as_str()) {
                             let re = Regex::new(format!(r"(:\s)({})", new_type).as_str())?;
                             let replacement: String = format!("${{1}}{}", value.1);
                             new_syntax = re
@@ -239,12 +278,13 @@ fn check_syntax(
                         new_content = new_content.replace(syntax, new_syntax.to_string().as_str());
                     }
                 }
-            } else if let Some(type_) = param.and_then(|p| p.param) {
-                if !validate_type(type_.as_str())
-                    && conversion_map.contains_key(type_.as_str())
-                    && args.fix
-                {
-                    if let Some(value) = conversion_map.get_key_value(&type_) {
+            } else if let Some(type_) = param
+                .and_then(|p| p.param.clone())
+                .and_then(|p| p.first().cloned())
+            {
+                let t = type_.as_str();
+                if !validate_type(t) && conversion_map.contains_key(t) && args.fix {
+                    if let Some(value) = conversion_map.get_key_value(t) {
                         let re = Regex::new(format!(r"(:\s)({})", type_).as_str())?;
                         let replacement: String = format!("${{1}}{}", value.1);
                         let new_syntax = re.replace_all(syntax, replacement.as_str()).to_string();
