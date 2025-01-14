@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-  "diff_images/",
+  "diff_images/", 
+  "fix_links",
   "move_command/",
   "opti_images/",
   "syntax_checker/",
