@@ -1,3 +1,7 @@
+### Move commands
+
+- Pour les commandes qui passent de commands-legacy à commands en version courante.
+ 
 mettre l'exe à côté du docusaurus.config.js et faire 
 
 `move_command.exe -f abs.md -d ./docs/`
