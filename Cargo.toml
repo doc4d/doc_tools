@@ -1,8 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
+<<<<<<< Updated upstream
   "diff_images/", 
   "fix_links",
+=======
+  "diff_images/",
+  "html_to_md/",
+>>>>>>> Stashed changes
   "move_command/",
   "opti_images/",
   "syntax_checker/",
