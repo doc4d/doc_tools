@@ -34,4 +34,6 @@ Another example:
 move_command.exe -f wp-truc.md -d ../../docs/
 ```
 
-3. Manually delete the moved file from `commands-legacy` in the `i18n` folder.
+3. Manually edit the following files:
+-  sidebar.json
+-  theme/(theme de la commande) 
