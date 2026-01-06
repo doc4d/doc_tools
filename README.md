@@ -24,8 +24,10 @@
 2. Place the executable next to `docusaurus.config.js` and run:
 
 ```sh
-move_command.exe -f abs.md -d ./
+.\move_command.exe -f abs.md -d ./
 ```
+
+
 If move_commands.exe is oustide the docs/ folder:
 
 ```sh
